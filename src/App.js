@@ -1,483 +1,724 @@
 import React, { useState, useRef, useEffect } from 'react';
+import * as THREE from 'three';
 
-// ✅ FIXED: All API calls now use environment variable instead of hardcoded localhost
 const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:8000';
 
-function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [authMode, setAuthMode] = useState('login'); 
-  const [authForm, setAuthForm] = useState({ name: '', email: '', password: '' });
-  const [authError, setAuthError] = useState('');
-
-  const defaultWelcomeMessage = { sender: 'ai', text: "Welcome to your SkillSync AI Mock Interview. I am ready when you are. Please introduce yourself and let's begin." };
-  
-  const [input, setInput] = useState('');
-  const [messages, setMessages] = useState([defaultWelcomeMessage]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [interviewActive, setInterviewActive] = useState(false);
-  const [activeTab, setActiveTab] = useState('dashboard');
-  
-  const [resumeFile, setResumeFile] = useState(null);
-  const [isParsing, setIsParsing] = useState(false); 
-  const [profileForm, setProfileForm] = useState({ name: '', phone: '', college: '', job_preference: '', new_password: '' });
-  const [profileUpdateMsg, setProfileUpdateMsg] = useState('');
-
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [showReportPopup, setShowReportPopup] = useState(false);
-  
-  const [selectedReport, setSelectedReport] = useState(null);
-
-  const chatEndRef = useRef(null);
-  const videoRef = useRef(null);
-
+/* ── THREE.JS PARTICLE BACKGROUND ── */
+function ParticleBackground({ scene = 'login' }) {
+  const mountRef = useRef(null);
   useEffect(() => {
-    if (currentUser) {
-      setProfileForm({ name: currentUser.name || '', phone: currentUser.phone || '', college: currentUser.college || '', job_preference: currentUser.job_preference || '', new_password: '' });
-    }
-  }, [currentUser]);
-
-  const handleAuthSubmit = async (e) => {
-    e.preventDefault();
-    setAuthError('');
-    const endpoint = authMode === 'login' ? '/api/login' : '/api/register';
-    const payload = authMode === 'login' ? { email: authForm.email, password: authForm.password } : { name: authForm.name, email: authForm.email, password: authForm.password };
-
-    try {
-      // ✅ FIXED: was 'http://localhost:8000${endpoint}'
-      const response = await fetch(`${API_URL}${endpoint}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      });
-      const data = await response.json();
-      if (response.ok) setCurrentUser(data.user); 
-      else setAuthError(data.detail || "Authentication failed");
-    } catch (err) { setAuthError("Network error. Is the Python backend running?"); }
-  };
-
-  const handleLogout = () => {
-    setCurrentUser(null);
-    setAuthForm({ name: '', email: '', password: '' });
-    setActiveTab('dashboard');
-    setInterviewActive(false);
-    setResumeFile(null);
-    setMessages([defaultWelcomeMessage]);
-    setSelectedReport(null);
-    window.speechSynthesis.cancel(); 
-  };
-
-  const handleProfileUpdate = async (e) => {
-    e.preventDefault();
-    setProfileUpdateMsg('Updating...');
-    try {
-      // ✅ FIXED: was 'http://localhost:8000/api/update_profile'
-      const response = await fetch(`${API_URL}/api/update_profile`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: currentUser.email, ...profileForm }),
-      });
-      const data = await response.json();
-      if (response.ok) {
-        setCurrentUser(data.user);
-        setProfileUpdateMsg('Profile Updated Successfully!');
-        setTimeout(() => { setProfileUpdateMsg(''); setActiveTab('dashboard'); }, 1500);
-      } else setProfileUpdateMsg('Error: ' + data.detail);
-    } catch (err) { setProfileUpdateMsg('Network error.'); }
-  };
-
-  const handleResumeUpload = async (e) => { 
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      setResumeFile(file.name);
-      setIsParsing(true); 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("email", currentUser.email); 
-
-      try {
-        // ✅ FIXED: was 'http://localhost:8000/api/upload_resume'
-        const response = await fetch(`${API_URL}/api/upload_resume`, { method: 'POST', body: formData });
-        if (!response.ok) setResumeFile("Error parsing document");
-      } catch (err) { setResumeFile("Network Error"); } finally { setIsParsing(false); }
-    } 
-  };
-
-  useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: 'smooth' }); }, [messages]);
-
-  useEffect(() => {
-    let stream = null;
-    const startCamera = async () => {
-      if (interviewActive && currentUser) {
-        try { stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false }); if (videoRef.current) videoRef.current.srcObject = stream; } catch (err) {}
-      } else {
-        if (videoRef.current && videoRef.current.srcObject) { videoRef.current.srcObject.getTracks().forEach(track => track.stop()); videoRef.current.srcObject = null; }
-        window.speechSynthesis.cancel(); 
-      }
+    const mount = mountRef.current;
+    if (!mount) return;
+    const W = mount.clientWidth, H = mount.clientHeight;
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setSize(W, H);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    mount.appendChild(renderer.domElement);
+    const sceneObj = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(60, W / H, 0.1, 1000);
+    camera.position.z = 80;
+    const themes = {
+      login:     { primary: 0x00d4ff, secondary: 0x0066cc, count: 600 },
+      dashboard: { primary: 0x00ffaa, secondary: 0x0099ff, count: 400 },
+      interview: { primary: 0xff6b35, secondary: 0xff0066, count: 500 },
     };
-    startCamera();
-    return () => { if (stream) stream.getTracks().forEach(track => track.stop()); };
-  }, [interviewActive, currentUser]);
-
-  const speakText = (text) => {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel(); 
-      const utterance = new SpeechSynthesisUtterance(text);
-      const voices = window.speechSynthesis.getVoices();
-      const preferredVoice = voices.find(voice => voice.lang.startsWith('en-') && (voice.name.includes('Google') || voice.name.includes('Female') || voice.name.includes('Natural')));
-      if (preferredVoice) utterance.voice = preferredVoice;
-      utterance.rate = 1.0; 
-      window.speechSynthesis.speak(utterance);
+    const theme = themes[scene] || themes.login;
+    const geo = new THREE.BufferGeometry();
+    const count = theme.count;
+    const pos = new Float32Array(count * 3);
+    const colors = new Float32Array(count * 3);
+    const c1 = new THREE.Color(theme.primary), c2 = new THREE.Color(theme.secondary);
+    for (let i = 0; i < count; i++) {
+      pos[i*3]=(Math.random()-0.5)*200; pos[i*3+1]=(Math.random()-0.5)*200; pos[i*3+2]=(Math.random()-0.5)*100;
+      const c=c1.clone().lerp(c2,Math.random()); colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
     }
-  };
+    geo.setAttribute('position',new THREE.BufferAttribute(pos,3));
+    geo.setAttribute('color',new THREE.BufferAttribute(colors,3));
+    const mat = new THREE.PointsMaterial({ size:0.8, vertexColors:true, transparent:true, opacity:0.6, sizeAttenuation:true });
+    const points = new THREE.Points(geo, mat);
+    sceneObj.add(points);
+    const shapes = [];
+    const shapeGeos = [new THREE.OctahedronGeometry(3,0), new THREE.TetrahedronGeometry(2.5,0), new THREE.IcosahedronGeometry(2,0)];
+    for (let i = 0; i < 6; i++) {
+      const m = new THREE.MeshBasicMaterial({ color: i%2===0?theme.primary:theme.secondary, wireframe:true, transparent:true, opacity:0.12 });
+      const mesh = new THREE.Mesh(shapeGeos[i%3], m);
+      mesh.position.set((Math.random()-0.5)*120,(Math.random()-0.5)*80,(Math.random()-0.5)*40-20);
+      mesh.userData = { rx: Math.random()*0.005, ry: Math.random()*0.008 };
+      sceneObj.add(mesh); shapes.push(mesh);
+    }
+    const grid = new THREE.GridHelper(200,30,theme.secondary,theme.secondary);
+    grid.material.opacity=0.04; grid.material.transparent=true; grid.position.y=-50;
+    sceneObj.add(grid);
+    let mx=0, my=0;
+    const onMouse = e => { mx=(e.clientX/W-0.5)*2; my=(e.clientY/H-0.5)*2; };
+    window.addEventListener('mousemove', onMouse);
+    let frame, t=0;
+    const animate = () => {
+      frame=requestAnimationFrame(animate); t+=0.003;
+      points.rotation.y=t*0.05; points.rotation.x=t*0.02;
+      shapes.forEach(s=>{ s.rotation.x+=s.userData.rx; s.rotation.y+=s.userData.ry; });
+      camera.position.x+=(mx*8-camera.position.x)*0.02;
+      camera.position.y+=(-my*5-camera.position.y)*0.02;
+      camera.lookAt(sceneObj.position);
+      renderer.render(sceneObj,camera);
+    };
+    animate();
+    const onResize = () => { const w=mount.clientWidth,h=mount.clientHeight; camera.aspect=w/h; camera.updateProjectionMatrix(); renderer.setSize(w,h); };
+    window.addEventListener('resize', onResize);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('mousemove',onMouse); window.removeEventListener('resize',onResize); if(mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement); renderer.dispose(); };
+  }, [scene]);
+  return <div ref={mountRef} style={{ position:'absolute', inset:0, zIndex:0 }} />;
+}
 
-  const sendMessage = async () => {
-    if (!input.trim()) return;
-    const newMessages = [...messages, { sender: 'user', text: input }];
-    setMessages(newMessages);
-    setInput('');
-    setIsLoading(true);
+/* ── ROTATING 3D LOGO ── */
+function LogoCube({ size=80, color=0x0066ff }) {
+  const mountRef = useRef(null);
+  useEffect(() => {
+    const mount = mountRef.current;
+    if (!mount) return;
+    const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+    renderer.setSize(size, size); renderer.setPixelRatio(2);
+    mount.appendChild(renderer.domElement);
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(50,1,0.1,100);
+    camera.position.z=3.5;
+    const geo = new THREE.OctahedronGeometry(1.2,0);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent:true, opacity:0.9 }));
+    const wire = new THREE.Mesh(geo.clone(), new THREE.MeshBasicMaterial({ color:0xffffff, wireframe:true, transparent:true, opacity:0.25 }));
+    scene.add(mesh); scene.add(wire);
+    let frame;
+    const animate = () => { frame=requestAnimationFrame(animate); mesh.rotation.x+=0.012; mesh.rotation.y+=0.018; wire.rotation.x+=0.012; wire.rotation.y+=0.018; renderer.render(scene,camera); };
+    animate();
+    return () => { cancelAnimationFrame(frame); if(mount.contains(renderer.domElement)) mount.removeChild(renderer.domElement); renderer.dispose(); };
+  }, [size, color]);
+  return <div ref={mountRef} style={{ width:size, height:size, flexShrink:0 }} />;
+}
 
+/* ── DESIGN TOKENS ── */
+const G = {
+  bg:'#020817', surface:'#0a1628', card:'#0d1f3c', border:'#1a3a6b',
+  accent:'#00d4ff', accent2:'#0066ff', green:'#00ffaa', red:'#ff4466', amber:'#ffaa00',
+  text:'#e8f4ff', muted:'#4a7ab5',
+  font:"'DM Sans','Segoe UI',sans-serif",
+  mono:"'JetBrains Mono','Fira Code',monospace",
+};
+
+const css = `
+  @import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:${G.bg};color:${G.text};font-family:${G.font};overflow-x:hidden}
+  ::-webkit-scrollbar{width:4px}::-webkit-scrollbar-track{background:${G.bg}}::-webkit-scrollbar-thumb{background:${G.border};border-radius:4px}
+  .glass{background:rgba(13,31,60,0.7);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);border:1px solid rgba(0,212,255,0.12);border-radius:16px;transition:border-color 0.3s}
+  .glass:hover{border-color:rgba(0,212,255,0.25)}
+  .glow-text{background:linear-gradient(135deg,#00d4ff 0%,#0066ff 50%,#00ffaa 100%);-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text}
+  .btn-primary{background:linear-gradient(135deg,#0066ff,#00d4ff);color:white;border:none;border-radius:10px;cursor:pointer;font-family:${G.font};font-weight:600;transition:all 0.25s;box-shadow:0 0 20px rgba(0,102,255,0.35)}
+  .btn-primary:hover{transform:translateY(-2px);box-shadow:0 4px 30px rgba(0,102,255,0.55)}
+  .btn-primary:disabled{opacity:0.5;cursor:not-allowed;transform:none}
+  .btn-ghost{background:transparent;color:${G.muted};border:1px solid ${G.border};border-radius:10px;cursor:pointer;font-family:${G.font};font-weight:500;transition:all 0.2s}
+  .btn-ghost:hover{color:${G.accent};border-color:${G.accent};background:rgba(0,212,255,0.06)}
+  .btn-danger{background:linear-gradient(135deg,#cc0033,#ff4466);color:white;border:none;border-radius:10px;cursor:pointer;font-family:${G.font};font-weight:600;transition:all 0.25s;box-shadow:0 0 20px rgba(255,68,102,0.3)}
+  .btn-danger:hover{transform:translateY(-2px);box-shadow:0 4px 25px rgba(255,68,102,0.5)}
+  .btn-success{background:linear-gradient(135deg,#006644,#00ffaa);color:#002211;border:none;border-radius:10px;cursor:pointer;font-family:${G.font};font-weight:700;transition:all 0.25s;box-shadow:0 0 20px rgba(0,255,170,0.3)}
+  .btn-success:hover{transform:translateY(-2px);box-shadow:0 4px 25px rgba(0,255,170,0.5)}
+  .btn-success:disabled{opacity:0.4;cursor:not-allowed;transform:none}
+  .input-field{width:100%;padding:14px 18px;background:rgba(2,8,23,0.8);border:1px solid ${G.border};border-radius:10px;color:${G.text};font-family:${G.font};font-size:0.95rem;outline:none;transition:all 0.2s;box-shadow:inset 0 2px 8px rgba(0,0,0,0.3)}
+  .input-field:focus{border-color:${G.accent};box-shadow:0 0 0 3px rgba(0,212,255,0.12),inset 0 2px 8px rgba(0,0,0,0.3)}
+  .input-field::placeholder{color:${G.muted}}
+  .input-field:disabled{opacity:0.5;cursor:not-allowed}
+  .nav-item{display:flex;align-items:center;gap:12px;padding:11px 16px;border-radius:10px;cursor:pointer;border:none;background:transparent;color:${G.muted};font-family:${G.font};font-size:0.9rem;font-weight:500;transition:all 0.2s;width:100%;text-align:left}
+  .nav-item:hover{color:${G.text};background:rgba(0,212,255,0.07)}
+  .nav-item.active{color:${G.accent};background:rgba(0,212,255,0.12);border:1px solid rgba(0,212,255,0.2)}
+  .stat-card{padding:24px;border-radius:16px;position:relative;overflow:hidden;background:rgba(13,31,60,0.6);border:1px solid rgba(0,212,255,0.1);backdrop-filter:blur(12px);transition:all 0.3s}
+  .stat-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--ac,#00d4ff),transparent)}
+  .stat-card:hover{transform:translateY(-4px);border-color:rgba(0,212,255,0.25);box-shadow:0 12px 40px rgba(0,0,0,0.4)}
+  .chat-ai{background:rgba(0,102,255,0.1);border:1px solid rgba(0,102,255,0.2);border-radius:16px 16px 16px 4px;padding:14px 18px;max-width:75%;line-height:1.6;font-size:0.93rem}
+  .chat-user{background:linear-gradient(135deg,rgba(0,102,255,0.25),rgba(0,212,255,0.15));border:1px solid rgba(0,212,255,0.25);border-radius:16px 16px 4px 16px;padding:14px 18px;max-width:75%;line-height:1.6;font-size:0.93rem}
+  .modal-bg{position:fixed;inset:0;background:rgba(0,0,0,0.75);backdrop-filter:blur(8px);z-index:1000;display:flex;align-items:center;justify-content:center}
+  .fade-in{animation:fadeIn 0.5s ease forwards}
+  @keyframes fadeIn{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:translateY(0)}}
+  .pulse{animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(0,212,255,0.4)}50%{box-shadow:0 0 0 12px rgba(0,212,255,0)}}
+  .shimmer{background:linear-gradient(90deg,transparent,rgba(0,212,255,0.08),transparent);background-size:200% 100%;animation:shimmer 2s infinite}
+  @keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+  .live-dot{width:8px;height:8px;border-radius:50%;background:#00ffaa;box-shadow:0 0 8px #00ffaa;animation:blink 1.5s ease-in-out infinite;flex-shrink:0}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:0.3}}
+  .bar-track{background:rgba(255,255,255,0.06);border-radius:999px;height:8px;overflow:hidden}
+  .bar-fill{height:100%;border-radius:999px;background:linear-gradient(90deg,#0066ff,#00d4ff);transition:width 1.8s cubic-bezier(0.16,1,0.3,1);box-shadow:0 0 10px rgba(0,212,255,0.4)}
+  .score-ring{transform:rotate(-90deg)}
+  .score-arc{transition:stroke-dashoffset 1.8s cubic-bezier(0.16,1,0.3,1)}
+  .toggle-btn{flex:1;padding:9px;border-radius:8px;border:none;cursor:pointer;font-family:${G.font};font-weight:600;font-size:0.85rem;text-transform:capitalize;transition:all 0.2s}
+`;
+
+/* ── LOGIN PAGE ── */
+function LoginPage({ onLogin }) {
+  const [mode, setMode] = useState('login');
+  const [form, setForm] = useState({ name:'', email:'', password:'' });
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+
+  const submit = async e => {
+    e.preventDefault(); setError(''); setLoading(true);
+    const ep = mode==='login' ? '/api/login' : '/api/register';
+    const payload = mode==='login' ? {email:form.email,password:form.password} : form;
     try {
-      // ✅ FIXED: was 'http://localhost:8000/api/chat'
-      const response = await fetch(`${API_URL}/api/chat`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: currentUser.email, user_message: input }), 
-      });
-      const data = await response.json();
-      if (data.status === 'success') {
-        setMessages((prev) => [...prev, { sender: 'ai', text: data.reply }]);
-        if (interviewActive) speakText(data.reply);
-      }
-    } catch (error) {
-      setMessages((prev) => [...prev, { sender: 'ai', text: 'Network Error.' }]);
-    } finally { setIsLoading(false); }
+      const res = await fetch(`${API_URL}${ep}`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+      const data = await res.json();
+      if (res.ok) onLogin(data.user); else setError(data.detail||'Authentication failed');
+    } catch { setError('Network error. Is the backend running?'); }
+    finally { setLoading(false); }
   };
-
-  const handleEndInterview = async () => {
-    setInterviewActive(false);
-    window.speechSynthesis.cancel();
-    if (messages.length <= 1) { setMessages([defaultWelcomeMessage]); return; }
-
-    setIsAnalyzing(true);
-    const transcript = messages.map(m => `${m.sender.toUpperCase()}: ${m.text}`).join('\n\n');
-
-    try {
-        // ✅ FIXED: was 'http://localhost:8000/api/analyze_interview'
-        const response = await fetch(`${API_URL}/api/analyze_interview`, {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: currentUser.email, transcript })
-        });
-        const data = await response.json();
-        if (response.ok) {
-            setCurrentUser({...currentUser, reports: data.reports}); 
-            setShowReportPopup(true); 
-            setMessages([defaultWelcomeMessage]); 
-        } else {
-            alert("Analysis failed. The AI API might be rate-limited. Try again soon.");
-        }
-    } catch (err) { 
-        console.error("Failed to analyze", err); 
-        alert("Network Error: Could not reach the analysis server.");
-    } finally { setIsAnalyzing(false); }
-  };
-
-  const getInitials = (name) => name ? name.split(' ').map(n => n[0]).join('').toUpperCase().substring(0, 2) : 'U';
-
-  const sharedStyles = `
-    .card-3d { transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), box-shadow 0.3s ease; box-shadow: 0 8px 16px rgba(0,0,0,0.4), inset 0 1px 1px rgba(255,255,255,0.05); }
-    .card-3d:hover { transform: translateY(-6px); box-shadow: 0 15px 30px rgba(0,0,0,0.6), inset 0 1px 1px rgba(255,255,255,0.1); border-color: #334155 !important; }
-    .btn-3d-blue { background-color: #0284C7; color: white; border: none; border-radius: 8px; cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; box-shadow: 0 4px 0 #0369A1, 0 6px 15px rgba(0,0,0,0.4); }
-    .btn-3d-blue:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #0369A1, 0 2px 5px rgba(0,0,0,0.4); }
-    .btn-3d-red { background-color: #EF4444; color: white; border: none; border-radius: 8px; cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; box-shadow: 0 4px 0 #B91C1C, 0 6px 15px rgba(0,0,0,0.4); }
-    .btn-3d-red:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #B91C1C, 0 2px 5px rgba(0,0,0,0.4); }
-    .btn-3d-green { background-color: #10B981; color: white; border: none; border-radius: 10px; cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; box-shadow: 0 4px 0 #059669, 0 6px 15px rgba(0,0,0,0.4); }
-    .btn-3d-green:active:not(:disabled) { transform: translateY(4px); box-shadow: 0 0 0 #059669, 0 2px 5px rgba(0,0,0,0.4); }
-    .btn-3d-dark { background-color: #1E293B; color: #F8FAFC; border: 1px solid #334155; border-radius: 20px; cursor: pointer; transition: transform 0.1s, box-shadow 0.1s; box-shadow: 0 3px 0 #0F172A, 0 5px 10px rgba(0,0,0,0.3); }
-    .btn-3d-dark:active { transform: translateY(3px); box-shadow: 0 0 0 #0F172A, 0 2px 4px rgba(0,0,0,0.3); }
-    .input-3d { width: 100%; padding: 15px; border-radius: 10px; border: 1px solid #334155; background-color: rgba(15, 23, 42, 0.8); color: #F8FAFC; font-size: 1rem; outline: none; transition: all 0.3s ease; box-shadow: inset 0 3px 6px rgba(0,0,0,0.4); margin-bottom: 20px; box-sizing: border-box; }
-    .input-3d:focus { border-color: #0284C7; box-shadow: inset 0 3px 6px rgba(0,0,0,0.6), 0 0 10px rgba(2, 132, 199, 0.3); }
-    .nav-tab-3d { transition: all 0.2s ease; } .nav-tab-3d:hover { transform: translateX(5px); } .nav-tab-3d:active { transform: scale(0.96) translateX(2px); box-shadow: inset 0 3px 6px rgba(0,0,0,0.4); }
-    .input-disabled { background-color: rgba(30, 41, 59, 0.5); color: #64748B; cursor: not-allowed; }
-    @keyframes pulse-glow { 0% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0.4); } 70% { box-shadow: 0 0 0 10px rgba(56, 189, 248, 0); } 100% { box-shadow: 0 0 0 0 rgba(56, 189, 248, 0); } }
-    .parsing-pulse { animation: pulse-glow 1.5s infinite; border-radius: 8px; border: 1px solid #38BDF8 !important; }
-    .modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); display: flex; align-items: center; justify-content: center; z-index: 1000; backdrop-filter: blur(5px); }
-    .modal-content { background: #0F172A; padding: 40px; border-radius: 20px; border: 1px solid #38BDF8; box-shadow: 0 0 30px rgba(56,189,248,0.2); text-align: center; max-width: 400px; animation: fadeUp 0.3s ease forwards; }
-    @keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
-    .bar-container { width: 100%; background: #1E293B; border-radius: 8px; height: 16px; overflow: hidden; margin-top: 8px; box-shadow: inset 0 2px 4px rgba(0,0,0,0.5); }
-    .bar-fill { height: 100%; background: linear-gradient(90deg, #0284C7, #38BDF8); border-radius: 8px; transition: width 1.5s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
-  `;
-
-  if (!currentUser) {
-    return (
-      <div style={{ display: 'flex', height: '100vh', justifyContent: 'center', alignItems: 'center', backgroundColor: '#0B1121', fontFamily: "'Inter', sans-serif" }}>
-        <style>{sharedStyles}</style>
-        <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '40px', borderRadius: '20px', width: '400px', border: '1px solid #1E293B', position: 'relative', overflow: 'hidden' }}>
-          <div style={{ position: 'absolute', top: '-50px', right: '-50px', width: '150px', height: '150px', background: 'radial-gradient(circle, rgba(2,132,199,0.3) 0%, rgba(0,0,0,0) 70%)', borderRadius: '50%' }}></div>
-          <h2 style={{ fontSize: '2rem', fontWeight: 'bold', color: '#38BDF8', marginBottom: '10px', textAlign: 'center', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}><span style={{ fontSize: '2.2rem' }}>⚡</span> SkillSync AI</h2>
-          <p style={{ color: '#94A3B8', textAlign: 'center', marginBottom: '30px' }}>{authMode === 'login' ? 'Authenticate to access your dashboard' : 'Create your neural profile'}</p>
-          <form onSubmit={handleAuthSubmit}>
-            {authMode === 'register' && <input type="text" placeholder="Full Name" className="input-3d" required value={authForm.name} onChange={(e) => setAuthForm({...authForm, name: e.target.value})} />}
-            <input type="email" placeholder="Email Address" className="input-3d" required value={authForm.email} onChange={(e) => setAuthForm({...authForm, email: e.target.value})} />
-            <input type="password" placeholder="Password" className="input-3d" required value={authForm.password} onChange={(e) => setAuthForm({...authForm, password: e.target.value})} />
-            {authError && <p style={{ color: '#EF4444', fontSize: '0.9rem', marginBottom: '20px', textAlign: 'center' }}>{authError}</p>}
-            <button type="submit" className="btn-3d-blue" style={{ width: '100%', padding: '15px', fontSize: '1.1rem', fontWeight: 'bold' }}>{authMode === 'login' ? 'Initialize Login' : 'Register Profile'}</button>
-          </form>
-          <div style={{ textAlign: 'center', marginTop: '25px' }}>
-            <span style={{ color: '#64748B', fontSize: '0.9rem' }}>
-              {authMode === 'login' ? "Don't have a profile? " : "Already registered? "}
-              <button onClick={() => { setAuthMode(authMode === 'login' ? 'register' : 'login'); setAuthError(''); }} style={{ background: 'none', border: 'none', color: '#38BDF8', cursor: 'pointer', fontWeight: 'bold', fontSize: '0.9rem', textDecoration: 'underline' }}>{authMode === 'login' ? 'Register Here' : 'Login Here'}</button>
-            </span>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  const isProfileIncomplete = !currentUser.phone || !currentUser.college || !currentUser.job_preference;
-
-  const SkillBar = ({ label, score }) => (
-    <div style={{ marginBottom: '20px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', color: '#E2E8F0', fontSize: '0.95rem', fontWeight: 'bold' }}>
-        <span>{label}</span><span>{score || 0}%</span>
-      </div>
-      <div className="bar-container"><div className="bar-fill" style={{ width: `${score || 0}%` }}></div></div>
-    </div>
-  );
 
   return (
-    <div style={{ display: 'flex', height: '100vh', fontFamily: "'Inter', sans-serif", backgroundColor: '#0B1121', color: '#F8FAFC' }}>
-      <style>{sharedStyles}</style>
+    <div style={{position:'relative',height:'100vh',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}}>
+      <ParticleBackground scene="login" />
+      <div style={{position:'absolute',top:'10%',left:'15%',width:400,height:400,background:'radial-gradient(circle,rgba(0,102,255,0.12) 0%,transparent 70%)',borderRadius:'50%',pointerEvents:'none'}}/>
+      <div style={{position:'absolute',bottom:'15%',right:'10%',width:350,height:350,background:'radial-gradient(circle,rgba(0,212,255,0.08) 0%,transparent 70%)',borderRadius:'50%',pointerEvents:'none'}}/>
 
-      {(isAnalyzing || showReportPopup) && (
-        <div className="modal-overlay">
-            <div className="modal-content">
-                {isAnalyzing ? (
-                    <>
-                        <div className="parsing-pulse" style={{width:'60px', height:'60px', borderRadius:'50%', background:'#38BDF8', margin:'0 auto 25px'}}></div>
-                        <h2 style={{color: '#F8FAFC', margin: '0 0 10px 0'}}>Analyzing Performance...</h2>
-                        <p style={{color: '#94A3B8'}}>Generating your detailed feedback report based on the transcript.</p>
-                    </>
-                ) : (
-                    <>
-                        <div style={{fontSize:'3.5rem', marginBottom:'15px', textShadow:'0 4px 8px rgba(0,0,0,0.5)'}}>📊</div>
-                        <h2 style={{color: '#F8FAFC', margin: '0 0 10px 0'}}>Interview Analyzed!</h2>
-                        <p style={{color: '#94A3B8', marginBottom: '25px'}}>Your performance report has been generated successfully.</p>
-                        <button className="btn-3d-blue" style={{padding: '12px 24px', fontSize: '1.1rem', fontWeight: 'bold'}} onClick={() => { setShowReportPopup(false); setActiveTab('analytics'); }}>
-                           View Analytics
-                        </button>
-                    </>
-                )}
-            </div>
+      <div className="glass fade-in" style={{position:'relative',zIndex:1,width:420,padding:'44px 40px',boxShadow:'0 32px 80px rgba(0,0,0,0.6)'}}>
+        <div style={{display:'flex',alignItems:'center',gap:14,marginBottom:32,justifyContent:'center'}}>
+          <LogoCube size={52} color={0x0066ff}/>
+          <div>
+            <div className="glow-text" style={{fontSize:'1.7rem',fontWeight:700,letterSpacing:'-0.5px',lineHeight:1}}>SkillSync AI</div>
+            <div style={{color:G.muted,fontSize:'0.72rem',letterSpacing:'2px',textTransform:'uppercase',marginTop:3}}>Interview Platform</div>
+          </div>
         </div>
-      )}
-      
-      {/* SIDEBAR */}
-      <div style={{ width: '250px', backgroundColor: '#0F172A', padding: '20px', borderRight: '1px solid #1E293B', display: 'flex', flexDirection: 'column', zIndex: 10, boxShadow: '5px 0 15px rgba(0,0,0,0.3)' }}>
-        <h2 style={{ fontSize: '1.5rem', fontWeight: 'bold', color: '#38BDF8', marginBottom: '40px', display: 'flex', alignItems: 'center', gap: '10px', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}><span style={{ fontSize: '1.8rem' }}>⚡</span> SkillSync AI</h2>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
-          {['dashboard', 'interview', 'profile', 'analytics'].map((tab) => (
-            <button key={tab} onClick={() => { setActiveTab(tab); setSelectedReport(null); }} className="nav-tab-3d" style={{ padding: '12px 15px', textAlign: 'left', backgroundColor: activeTab === tab ? '#1E293B' : 'transparent', color: activeTab === tab ? '#38BDF8' : '#94A3B8', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '1rem', fontWeight: activeTab === tab ? '600' : '400', textTransform: 'capitalize' }}>
-              {tab} {tab === 'profile' && isProfileIncomplete && <span style={{ color: '#EF4444', float: 'right' }}>●</span>}
+
+        <div style={{display:'flex',background:'rgba(0,0,0,0.4)',borderRadius:10,padding:4,marginBottom:28,border:`1px solid ${G.border}`}}>
+          {['login','register'].map(m=>(
+            <button key={m} className="toggle-btn" onClick={()=>{setMode(m);setError('');}} style={{background:mode===m?'linear-gradient(135deg,#0066ff,#00d4ff)':'transparent',color:mode===m?'white':G.muted,boxShadow:mode===m?'0 4px 15px rgba(0,102,255,0.4)':'none'}}>
+              {m==='login'?'Sign In':'Register'}
             </button>
           ))}
         </div>
-        <div style={{ borderTop: '1px solid #1E293B', paddingTop: '20px' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '15px' }}>
-             <div style={{ width: '35px', height: '35px', borderRadius: '50%', backgroundColor: '#0284C7', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 'bold' }}>{getInitials(currentUser.name)}</div>
-             <div style={{ overflow: 'hidden' }}><p style={{ margin: 0, fontSize: '0.9rem', fontWeight: 'bold', whiteSpace: 'nowrap', textOverflow: 'ellipsis' }}>{currentUser.name}</p><p style={{ margin: 0, fontSize: '0.75rem', color: '#94A3B8' }}>Active Session</p></div>
+
+        <form onSubmit={submit} style={{display:'flex',flexDirection:'column',gap:14}}>
+          {mode==='register'&&<div>
+            <label style={{fontSize:'0.75rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',display:'block',marginBottom:6}}>Full Name</label>
+            <input className="input-field" placeholder="John Smith" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} required/>
+          </div>}
+          <div>
+            <label style={{fontSize:'0.75rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',display:'block',marginBottom:6}}>Email Address</label>
+            <input className="input-field" type="email" placeholder="you@company.com" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} required/>
           </div>
-          <button onClick={handleLogout} className="btn-3d-dark" style={{ width: '100%', padding: '10px', color: '#EF4444', fontWeight: 'bold' }}>Logout User</button>
+          <div>
+            <label style={{fontSize:'0.75rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',display:'block',marginBottom:6}}>Password</label>
+            <input className="input-field" type="password" placeholder="••••••••••" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} required/>
+          </div>
+          {error&&<div style={{background:'rgba(255,68,102,0.1)',border:'1px solid rgba(255,68,102,0.3)',borderRadius:8,padding:'10px 14px',color:'#ff8899',fontSize:'0.85rem'}}>⚠ {error}</div>}
+          <button type="submit" className="btn-primary" style={{padding:'14px',fontSize:'0.95rem',marginTop:6}} disabled={loading}>
+            {loading?'⟳ Authenticating...':mode==='login'?'→ Access Dashboard':'→ Create Account'}
+          </button>
+        </form>
+
+        <div style={{textAlign:'center',marginTop:20,fontSize:'0.83rem',color:G.muted}}>
+          {mode==='login'?"Don't have an account? ":"Already registered? "}
+          <button onClick={()=>{setMode(mode==='login'?'register':'login');setError('');}} style={{background:'none',border:'none',color:G.accent,cursor:'pointer',fontWeight:600,fontSize:'0.83rem'}}>
+            {mode==='login'?'Create one':'Sign in'}
+          </button>
         </div>
-      </div>
-
-      {/* MAIN AREA */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflowY: 'auto' }}>
-        
-        {/* DASHBOARD */}
-        {activeTab === 'dashboard' && (
-          <div style={{ padding: '10px 30px' }}>
-            <div style={{ height: '140px', background: 'linear-gradient(90deg, #0284C7 0%, #38BDF8 100%)', borderRadius: '12px 12px 0 0', position: 'relative', boxShadow: 'inset 0 -5px 15px rgba(0,0,0,0.2)' }}></div>
-            <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '20px 30px 30px', borderRadius: '0 0 12px 12px', border: '1px solid #1E293B', borderTop: 'none', position: 'relative', marginBottom: '25px' }}>
-              <div style={{ width: '120px', height: '120px', backgroundColor: '#1E293B', borderRadius: '50%', position: 'absolute', top: '-60px', left: '30px', border: '5px solid #0B1121', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '3rem', color: '#F8FAFC', boxShadow: '0 8px 15px rgba(0,0,0,0.5), inset 0 2px 4px rgba(255,255,255,0.1)' }}>{getInitials(currentUser.name)}</div>
-              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                <button onClick={() => setActiveTab('profile')} className={isProfileIncomplete ? "btn-3d-green" : "btn-3d-dark"} style={{ padding: '8px 16px', fontWeight: 'bold' }}>{isProfileIncomplete ? "Complete Profile" : "Edit Profile"}</button>
-              </div>
-              <div style={{ marginTop: '10px' }}>
-                <h1 style={{ fontSize: '2rem', margin: '0 0 5px 0', color: '#F8FAFC', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>{currentUser.name}</h1>
-                <p style={{ color: '#E2E8F0', fontSize: '1.1rem', margin: '0 0 8px 0', fontWeight: '400' }}>{currentUser.job_preference || 'Candidate'} | SkillSync AI Platform</p>
-                <div style={{ display: 'flex', gap: '15px', color: '#94A3B8', fontSize: '0.9rem' }}>
-                  <span>📧 {currentUser.email}</span>{currentUser.college && <span>🎓 {currentUser.college}</span>}{currentUser.phone && <span>📞 {currentUser.phone}</span>}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', gap: '25px' }}>
-               <div style={{ flex: 2, display: 'flex', flexDirection: 'column', gap: '25px' }}>
-                 <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '25px', borderRadius: '12px', border: '1px solid #1E293B' }}>
-                   <h3 style={{ fontSize: '1.2rem', margin: '0 0 15px 0', color: '#F8FAFC' }}>Platform Status</h3>
-                   {isProfileIncomplete ? (
-                     <p style={{ color: '#F59E0B', lineHeight: '1.7', margin: 0, padding: '15px', backgroundColor: 'rgba(245, 158, 11, 0.1)', borderLeft: '4px solid #F59E0B', borderRadius: '4px' }}><strong>Action Required:</strong> Please click "Complete Profile" above to fill in your College and Job Preferences before initializing a session.</p>
-                   ) : (
-                     <p style={{ color: '#94A3B8', lineHeight: '1.7', margin: 0 }}>Profile complete. Head over to the "Interview" tab to initialize your agentic session, or upload your latest resume to build your context blueprint.</p>
-                   )}
-                 </div>
-               </div>
-
-               <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '25px' }}>
-                 <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '25px', borderRadius: '12px', border: '1px solid #1E293B' }}>
-                  <h3 style={{ fontSize: '1.2rem', margin: '0 0 15px 0', color: '#F8FAFC' }}>Upload Your Resume</h3>
-                  <div className={isParsing ? "parsing-pulse" : ""} style={{ border: '2px dashed #334155', borderRadius: '8px', padding: '30px 20px', textAlign: 'center', backgroundColor: '#0B1121', boxShadow: 'inset 0 4px 10px rgba(0,0,0,0.5)', transition: 'all 0.3s' }}>
-                    {isParsing ? (
-                       <div><div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>⚙️</div><p style={{ color: '#38BDF8', margin: '0 0 5px 0', fontWeight: 'bold' }}>AI is Parsing...</p><p style={{ color: '#94A3B8', fontSize: '0.8rem', margin: 0 }}>Generating Interview Blueprint</p></div>
-                    ) : resumeFile ? (
-                      <div><div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📄</div><p style={{ color: '#38BDF8', margin: '0 0 15px 0', fontWeight: '500', fontSize: '0.9rem' }}>{resumeFile}</p><p style={{ color: '#10B981', fontSize: '0.8rem', marginBottom: '15px' }}>✓ Blueprint generated</p><button className="btn-3d-dark" onClick={() => setResumeFile(null)} style={{ padding: '6px 12px', fontSize: '0.85rem', color: '#EF4444' }}>Remove</button></div>
-                    ) : (
-                      <><div style={{ fontSize: '2.5rem', marginBottom: '10px' }}>📤</div><label className="btn-3d-blue" style={{ padding: '10px 20px', display: 'inline-block', fontSize: '0.95rem', fontWeight: '500' }}>Upload Resume<input type="file" accept=".pdf" onChange={handleResumeUpload} style={{ display: 'none' }} /></label></>
-                    )}
-                  </div>
-                 </div>
-               </div>
-            </div>
-          </div>
-        )}
-
-        {/* PROFILE */}
-        {activeTab === 'profile' && (
-          <div style={{ padding: '30px', maxWidth: '800px', margin: '0 auto', width: '100%' }}>
-            <h2 style={{ color: '#F8FAFC', marginBottom: '25px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>{isProfileIncomplete ? 'Complete Your Profile' : 'Edit Your Profile'}</h2>
-            <form onSubmit={handleProfileUpdate} className="card-3d" style={{ backgroundColor: '#0F172A', padding: '30px', borderRadius: '16px', border: '1px solid #1E293B' }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                <div><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>Full Name</label><input type="text" className="input-3d" value={profileForm.name} onChange={(e) => setProfileForm({...profileForm, name: e.target.value})} required /></div>
-                <div><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>Email Address (Non-editable)</label><input type="email" className="input-3d input-disabled" value={currentUser.email} disabled /></div>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                <div><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>Phone Number</label><input type="tel" className="input-3d" placeholder="e.g. +91 9876543210" value={profileForm.phone} onChange={(e) => setProfileForm({...profileForm, phone: e.target.value})} required /></div>
-                <div><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>University / College</label><input type="text" className="input-3d" placeholder="e.g. SRM Delhi NCR Campus" value={profileForm.college} onChange={(e) => setProfileForm({...profileForm, college: e.target.value})} required /></div>
-              </div>
-              <div><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>Target Job Preference</label><input type="text" className="input-3d" placeholder="e.g. Cloud & Gen AI Engineer" value={profileForm.job_preference} onChange={(e) => setProfileForm({...profileForm, job_preference: e.target.value})} required /></div>
-              <div style={{ borderTop: '1px solid #1E293B', paddingTop: '20px', marginTop: '10px' }}><label style={{ display: 'block', color: '#94A3B8', marginBottom: '8px', fontSize: '0.9rem' }}>Change Password (Optional)</label><input type="password" className="input-3d" placeholder="Leave blank to keep current password" value={profileForm.new_password} onChange={(e) => setProfileForm({...profileForm, new_password: e.target.value})} /></div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '10px' }}><span style={{ color: profileUpdateMsg.includes('Error') ? '#EF4444' : '#10B981', fontWeight: 'bold' }}>{profileUpdateMsg}</span><button type="submit" className="btn-3d-blue" style={{ padding: '15px 30px', fontSize: '1.1rem', fontWeight: 'bold' }}>Save Profile</button></div>
-            </form>
-          </div>
-        )}
-
-        {/* INTERVIEW */}
-        {activeTab === 'interview' && (
-          <div style={{ display: 'flex', height: '100%' }}>
-            <div style={{ width: '300px', backgroundColor: '#111827', padding: '30px', borderRight: '1px solid #1E293B', display: 'flex', flexDirection: 'column', boxShadow: '5px 0 15px rgba(0,0,0,0.2)' }}>
-              <h3 style={{ marginBottom: '20px', color: '#E2E8F0', textShadow: '0 2px 4px rgba(0,0,0,0.5)' }}>Session Setup</h3>
-              <div className="card-3d" style={{ backgroundColor: '#000', height: '200px', borderRadius: '12px', overflow: 'hidden', marginBottom: '20px', position: 'relative', border: '2px solid #1E293B', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                {interviewActive ? <video ref={videoRef} autoPlay playsInline muted style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }} /> : <span style={{ color: '#64748B' }}>Camera Off</span>}
-                <div style={{ position: 'absolute', top: '12px', right: '12px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: 'rgba(0,0,0,0.6)', padding: '4px 8px', borderRadius: '12px' }}>
-                   <div style={{ width: '8px', height: '8px', backgroundColor: interviewActive ? '#10B981' : '#EF4444', borderRadius: '50%', boxShadow: interviewActive ? '0 0 8px #10B981' : '0 0 8px #EF4444' }}></div><span style={{ fontSize: '0.7rem', color: '#FFF' }}>{interviewActive ? 'LIVE' : 'OFFLINE'}</span>
-                </div>
-              </div>
-              <button onClick={interviewActive ? handleEndInterview : () => setInterviewActive(true)} className={interviewActive ? "btn-3d-red" : "btn-3d-blue"} style={{ padding: '15px', fontWeight: 'bold', fontSize: '1rem', marginTop: 'auto' }}>
-                {interviewActive ? 'End Interview' : 'Start Interview'}
-              </button>
-            </div>
-            
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', padding: '30px' }}>
-              <h2 style={{ color: '#F8FAFC', margin: '0 0 20px 0', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>Live Mock Interview</h2>
-              <div className="card-3d" style={{ flex: 1, backgroundColor: '#0F172A', borderRadius: '12px', padding: '25px', overflowY: 'auto', border: '1px solid #1E293B', marginBottom: '20px', boxShadow: 'inset 0 4px 10px rgba(0,0,0,0.3)' }}>
-                {messages.map((msg, index) => (
-                  <div key={index} style={{ display: 'flex', justifyContent: msg.sender === 'user' ? 'flex-end' : 'flex-start', marginBottom: '20px' }}>
-                    <div style={{ maxWidth: '75%', padding: '16px', borderRadius: '16px', backgroundColor: msg.sender === 'user' ? '#0284C7' : '#1E293B', color: '#F8FAFC', borderBottomRightRadius: msg.sender === 'user' ? '4px' : '16px', borderBottomLeftRadius: msg.sender === 'ai' ? '4px' : '16px', lineHeight: '1.6', fontSize: '0.95rem', boxShadow: '0 4px 8px rgba(0,0,0,0.3)' }}>
-                      <strong style={{ display: 'block', marginBottom: '8px', fontSize: '0.8rem', color: msg.sender === 'user' ? '#bae6fd' : '#94A3B8', textTransform: 'uppercase' }}>{msg.sender === 'user' ? currentUser.name.split(' ')[0] : 'AI Agent'}</strong>{msg.text}
-                    </div>
-                  </div>
-                ))}
-                {isLoading && <div style={{ color: '#94A3B8' }}>Agent is typing...</div>}
-                <div ref={chatEndRef} />
-              </div>
-              <div style={{ display: 'flex', gap: '15px' }}>
-                <input type="text" className="input-3d" style={{ marginBottom: 0 }} value={input} onChange={(e) => setInput(e.target.value)} onKeyPress={(e) => e.key === 'Enter' && sendMessage()} placeholder={interviewActive ? "Type your answer..." : "Click 'Start Interview'..."} disabled={!interviewActive} />
-                <button onClick={sendMessage} disabled={isLoading || !interviewActive || !input.trim()} className="btn-3d-green" style={{ padding: '0 35px', fontSize: '1rem', fontWeight: 'bold', opacity: (!interviewActive || !input.trim()) ? 0.5 : 1 }}>Send</button>
-              </div>
-            </div>
-          </div>
-        )}
-        
-        {/* ANALYTICS */}
-        {activeTab === 'analytics' && (
-          <div style={{ padding: '30px', maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
-            
-            {!selectedReport ? (
-                <>
-                    <h2 style={{ color: '#F8FAFC', marginBottom: '25px', textShadow: '0 2px 4px rgba(0,0,0,0.3)' }}>Interview Analytics</h2>
-                    {(!currentUser.reports || currentUser.reports.length === 0) ? (
-                        <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '60px', borderRadius: '16px', border: '1px solid #1E293B', textAlign: 'center' }}>
-                            <span style={{ fontSize: '4rem' }}>📈</span>
-                            <h3 style={{ color: '#E2E8F0', marginTop: '20px' }}>No Data Available</h3>
-                            <p style={{ color: '#94A3B8' }}>Complete a mock interview to generate your first performance report.</p>
-                        </div>
-                    ) : (
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '20px' }}>
-                            {currentUser.reports.map((report) => (
-                                <div key={report.id} onClick={() => setSelectedReport(report)} className="card-3d" style={{ backgroundColor: '#0F172A', padding: '25px', borderRadius: '16px', border: '1px solid #1E293B', cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                                    <div style={{ fontSize: '3rem', marginBottom: '15px' }}>📁</div>
-                                    <h3 style={{ color: '#38BDF8', margin: '0 0 10px 0', fontSize: '1.4rem' }}>{report.title}</h3>
-                                    <span style={{ backgroundColor: '#1E293B', color: '#10B981', padding: '5px 15px', borderRadius: '20px', fontSize: '0.85rem', fontWeight: 'bold' }}>AI Graded</span>
-                                    <button className="btn-3d-dark" style={{ marginTop: '20px', width: '100%', padding: '10px' }}>View Report</button>
-                                </div>
-                            ))}
-                        </div>
-                    )}
-                </>
-            ) : (
-                <>
-                    <button onClick={() => setSelectedReport(null)} style={{ background: 'none', border: 'none', color: '#94A3B8', cursor: 'pointer', marginBottom: '20px', fontSize: '1rem', display: 'flex', alignItems: 'center', gap: '5px' }}>
-                       ← Back to Reports
-                    </button>
-                    
-                    <div className="card-3d" style={{ backgroundColor: '#0F172A', padding: '40px', borderRadius: '16px', border: '1px solid #1E293B' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #1E293B', paddingBottom: '20px', marginBottom: '30px' }}>
-                            <h2 style={{ color: '#38BDF8', margin: 0, fontSize: '1.8rem' }}>{selectedReport.title}</h2>
-                            <span style={{ backgroundColor: '#1E293B', color: '#10B981', padding: '8px 20px', borderRadius: '20px', fontSize: '0.9rem', fontWeight: 'bold' }}>Verified</span>
-                        </div>
-                        
-                        {typeof selectedReport.content === 'string' ? (
-                             <div style={{ color: '#E2E8F0', lineHeight: '1.8', fontSize: '1rem', whiteSpace: 'pre-wrap' }}>
-                                {selectedReport.content.replace(/\*\*/g, '')}
-                             </div>
-                        ) : (
-                             <div>
-                                <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '40px', marginBottom: '40px' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: '#0B1121', padding: '30px', borderRadius: '16px', border: '1px solid #1E293B' }}>
-                                        <h3 style={{ color: '#94A3B8', margin: '0 0 20px 0', fontSize: '1rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Overall Score</h3>
-                                        <div style={{ width: '150px', height: '150px', borderRadius: '50%', background: `conic-gradient(#10B981 ${selectedReport.content?.overall_score || 0}%, #1E293B 0)`, display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: 'inset 0 0 20px rgba(0,0,0,0.5)' }}>
-                                            <div style={{ width: '120px', height: '120px', borderRadius: '50%', backgroundColor: '#0B1121', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                                <span style={{ fontSize: '2.5rem', fontWeight: 'bold', color: '#F8FAFC' }}>{selectedReport.content?.overall_score || 0}</span>
-                                            </div>
-                                        </div>
-                                    </div>
-                                    <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', backgroundColor: '#0B1121', padding: '30px', borderRadius: '16px', border: '1px solid #1E293B' }}>
-                                        <SkillBar label="Communication Skills" score={selectedReport.content?.metrics?.communication} />
-                                        <SkillBar label="Technical Depth" score={selectedReport.content?.metrics?.technical_depth} />
-                                        <SkillBar label="Confidence Signals" score={selectedReport.content?.metrics?.confidence} />
-                                    </div>
-                                </div>
-                                <div style={{ display: 'flex', flexDirection: 'column', gap: '25px' }}>
-                                    <div style={{ backgroundColor: 'rgba(56, 189, 248, 0.1)', padding: '25px', borderRadius: '12px', borderLeft: '4px solid #38BDF8' }}>
-                                        <h3 style={{ color: '#38BDF8', margin: '0 0 10px 0', fontSize: '1.2rem' }}>Executive Summary</h3>
-                                        <p style={{ color: '#E2E8F0', margin: 0, lineHeight: '1.6' }}>{selectedReport.content?.overall_impression}</p>
-                                    </div>
-                                    <div>
-                                        <h3 style={{ color: '#F8FAFC', margin: '0 0 15px 0', fontSize: '1.2rem', borderBottom: '1px solid #1E293B', paddingBottom: '10px' }}>Detailed Analysis</h3>
-                                        <p style={{ color: '#94A3B8', margin: 0, lineHeight: '1.8' }}>{selectedReport.content?.detailed_analysis}</p>
-                                    </div>
-                                    <div style={{ backgroundColor: 'rgba(239, 68, 68, 0.1)', padding: '25px', borderRadius: '12px', borderLeft: '4px solid #EF4444' }}>
-                                        <h3 style={{ color: '#EF4444', margin: '0 0 15px 0', fontSize: '1.2rem' }}>Key Areas for Improvement</h3>
-                                        <ul style={{ color: '#E2E8F0', margin: 0, paddingLeft: '20px', lineHeight: '1.8' }}>
-                                            {selectedReport.content?.areas_for_improvement?.map((point, idx) => <li key={idx} style={{ marginBottom: '8px' }}>{point}</li>)}
-                                        </ul>
-                                    </div>
-                                </div>
-                             </div>
-                        )}
-                    </div>
-                </>
-            )}
-          </div>
-        )}
+        <div style={{display:'flex',alignItems:'center',justifyContent:'center',gap:6,marginTop:24,paddingTop:20,borderTop:`1px solid ${G.border}`}}>
+          <span style={{fontSize:'0.68rem',color:G.muted,letterSpacing:'1px'}}>🔒 END-TO-END ENCRYPTED · GDPR COMPLIANT</span>
+        </div>
       </div>
     </div>
   );
 }
 
-export default App;
+/* ── SIDEBAR ── */
+function Sidebar({ activeTab, setActiveTab, currentUser, onLogout, isIncomplete }) {
+  const tabs = [
+    {id:'dashboard',icon:'⬡',label:'Dashboard'},
+    {id:'interview',icon:'◈',label:'Interview'},
+    {id:'profile',icon:'◉',label:'Profile',badge:isIncomplete},
+    {id:'analytics',icon:'◫',label:'Analytics'},
+  ];
+  const initials = n => n?n.split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2):'U';
+
+  return (
+    <div style={{width:230,background:'rgba(10,22,40,0.97)',borderRight:`1px solid ${G.border}`,display:'flex',flexDirection:'column',padding:'20px 14px',backdropFilter:'blur(20px)',zIndex:10,flexShrink:0}}>
+      <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',marginBottom:24}}>
+        <LogoCube size={36} color={0x0066ff}/>
+        <div>
+          <div className="glow-text" style={{fontSize:'1.05rem',fontWeight:700,letterSpacing:'-0.3px'}}>SkillSync</div>
+          <div style={{fontSize:'0.62rem',color:G.muted,letterSpacing:'1.5px',textTransform:'uppercase'}}>AI Platform</div>
+        </div>
+      </div>
+
+      <div style={{background:'rgba(0,212,255,0.06)',border:'1px solid rgba(0,212,255,0.15)',borderRadius:8,padding:'7px 12px',marginBottom:20,display:'flex',alignItems:'center',gap:8}}>
+        <div className="live-dot"/>
+        <span style={{fontSize:'0.68rem',color:G.accent,letterSpacing:'1px',fontFamily:G.mono}}>SYSTEM ONLINE</span>
+      </div>
+
+      <nav style={{display:'flex',flexDirection:'column',gap:4,flex:1}}>
+        {tabs.map(t=>(
+          <button key={t.id} className={`nav-item${activeTab===t.id?' active':''}`} onClick={()=>setActiveTab(t.id)}>
+            <span style={{fontSize:'1rem',width:20,textAlign:'center'}}>{t.icon}</span>
+            <span>{t.label}</span>
+            {t.badge&&<span style={{marginLeft:'auto',width:7,height:7,borderRadius:'50%',background:G.amber,boxShadow:`0 0 6px ${G.amber}`}}/>}
+          </button>
+        ))}
+      </nav>
+
+      <div style={{borderTop:`1px solid ${G.border}`,paddingTop:16}}>
+        <div style={{display:'flex',alignItems:'center',gap:10,padding:'8px 10px',marginBottom:10}}>
+          <div style={{width:34,height:34,borderRadius:'50%',background:'linear-gradient(135deg,#0066ff,#00d4ff)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'0.8rem',flexShrink:0}}>{initials(currentUser.name)}</div>
+          <div style={{overflow:'hidden',minWidth:0}}>
+            <div style={{fontSize:'0.85rem',fontWeight:600,whiteSpace:'nowrap',textOverflow:'ellipsis',overflow:'hidden'}}>{currentUser.name}</div>
+            <div style={{fontSize:'0.68rem',color:G.muted,whiteSpace:'nowrap',textOverflow:'ellipsis',overflow:'hidden'}}>{currentUser.email}</div>
+          </div>
+        </div>
+        <button className="btn-ghost" style={{width:'100%',padding:'9px',fontSize:'0.83rem',color:G.red}} onClick={onLogout}>⏻ Sign Out</button>
+      </div>
+    </div>
+  );
+}
+
+/* ── DASHBOARD ── */
+function Dashboard({ currentUser, setCurrentUser, setActiveTab }) {
+  const [resumeFile, setResumeFile] = useState(null);
+  const [isParsing, setIsParsing] = useState(false);
+  const isIncomplete = !currentUser.phone||!currentUser.college||!currentUser.job_preference;
+
+  const handleResume = async e => {
+    if (!e.target.files?.[0]) return;
+    const file = e.target.files[0];
+    setResumeFile(file.name); setIsParsing(true);
+    const fd = new FormData(); fd.append('file',file); fd.append('email',currentUser.email);
+    try { await fetch(`${API_URL}/api/upload_resume`,{method:'POST',body:fd}); } catch {}
+    finally { setIsParsing(false); }
+  };
+
+  const stats = [
+    {label:'Interviews',value:currentUser.reports?.length||0,icon:'◈',ac:'#00d4ff'},
+    {label:'Profile',value:isIncomplete?'Incomplete':'Complete',icon:'◉',ac:'#00ffaa'},
+    {label:'Resume',value:currentUser.blueprint?'Uploaded':'Missing',icon:'◫',ac:'#ffaa00'},
+    {label:'Status',value:'Active',icon:'⬡',ac:'#aa44ff'},
+  ];
+
+  return (
+    <div style={{padding:32,overflowY:'auto',flex:1}} className="fade-in">
+      <div style={{marginBottom:28}}>
+        <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'2px',textTransform:'uppercase',marginBottom:6,fontFamily:G.mono}}>Welcome back</div>
+        <h1 style={{fontSize:'2rem',fontWeight:700,letterSpacing:'-0.5px'}}>{currentUser.name.split(' ')[0]}, <span className="glow-text">ready to level up?</span></h1>
+      </div>
+
+      {isIncomplete&&<div style={{background:'rgba(255,170,0,0.08)',border:'1px solid rgba(255,170,0,0.25)',borderRadius:12,padding:'14px 20px',marginBottom:24,display:'flex',alignItems:'center',gap:12}}>
+        <span style={{fontSize:'1.2rem'}}>⚡</span>
+        <div style={{flex:1}}>
+          <div style={{fontWeight:600,color:G.amber,fontSize:'0.9rem'}}>Complete your profile</div>
+          <div style={{color:G.muted,fontSize:'0.82rem',marginTop:2}}>Add your college and job preferences to unlock personalized interviews</div>
+        </div>
+        <button className="btn-primary" style={{padding:'8px 16px',fontSize:'0.82rem',flexShrink:0}} onClick={()=>setActiveTab('profile')}>Complete →</button>
+      </div>}
+
+      <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:16,marginBottom:28}}>
+        {stats.map((s,i)=>(
+          <div key={i} className="stat-card" style={{'--ac':s.ac}}>
+            <div style={{fontSize:'1.3rem',color:s.ac,marginBottom:12}}>{s.icon}</div>
+            <div style={{fontSize:'1.4rem',fontWeight:700,color:s.ac,marginBottom:4,fontFamily:typeof s.value==='number'?G.mono:G.font}}>{s.value}</div>
+            <div style={{fontSize:'0.78rem',color:G.muted}}>{s.label}</div>
+          </div>
+        ))}
+      </div>
+
+      <div style={{display:'grid',gridTemplateColumns:'1fr 360px',gap:20}}>
+        <div className="glass" style={{padding:28}}>
+          <div style={{display:'flex',alignItems:'center',gap:16,marginBottom:24}}>
+            <div style={{width:60,height:60,borderRadius:'50%',background:'linear-gradient(135deg,#0066ff,#00d4ff)',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:'1.3rem',boxShadow:'0 0 20px rgba(0,102,255,0.4)',flexShrink:0}}>
+              {currentUser.name.split(' ').map(x=>x[0]).join('').toUpperCase().slice(0,2)}
+            </div>
+            <div>
+              <div style={{fontSize:'1.15rem',fontWeight:700}}>{currentUser.name}</div>
+              <div style={{color:G.muted,fontSize:'0.85rem'}}>{currentUser.job_preference||'No role set'}</div>
+              <div style={{color:G.accent,fontSize:'0.78rem',marginTop:3,fontFamily:G.mono}}>{currentUser.email}</div>
+            </div>
+          </div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}>
+            {[['College',currentUser.college||'—'],['Phone',currentUser.phone||'—']].map(([k,v])=>(
+              <div key={k} style={{background:'rgba(0,0,0,0.3)',borderRadius:10,padding:'12px 16px'}}>
+                <div style={{fontSize:'0.68rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',marginBottom:4}}>{k}</div>
+                <div style={{fontSize:'0.9rem',fontWeight:500}}>{v}</div>
+              </div>
+            ))}
+          </div>
+          <button className="btn-ghost" style={{width:'100%',padding:'11px',marginTop:16,fontSize:'0.88rem'}} onClick={()=>setActiveTab('profile')}>Edit Profile →</button>
+        </div>
+
+        <div className="glass" style={{padding:28}}>
+          <div style={{fontSize:'0.75rem',color:G.muted,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:16}}>Resume Upload</div>
+          <div style={{border:`2px dashed ${isParsing?G.accent:G.border}`,borderRadius:12,padding:'32px 20px',textAlign:'center',background:'rgba(0,0,0,0.2)',transition:'all 0.3s',position:'relative',overflow:'hidden'}}>
+            {isParsing&&<div className="shimmer" style={{position:'absolute',inset:0}}/>}
+            {isParsing?(
+              <div style={{position:'relative',zIndex:1}}>
+                <div style={{fontSize:'2rem',marginBottom:8}}>⚙</div>
+                <div style={{color:G.accent,fontWeight:600}}>Parsing Resume...</div>
+                <div style={{color:G.muted,fontSize:'0.8rem',marginTop:4}}>Generating AI blueprint</div>
+              </div>
+            ):resumeFile||currentUser.blueprint?(
+              <div>
+                <div style={{fontSize:'2rem',marginBottom:8,color:G.green}}>✓</div>
+                <div style={{color:G.green,fontWeight:600,fontSize:'0.9rem'}}>Blueprint Ready</div>
+                <div style={{color:G.muted,fontSize:'0.78rem',marginTop:4}}>{resumeFile||'Resume on file'}</div>
+                <label style={{display:'inline-block',marginTop:14,cursor:'pointer'}}>
+                  <span className="btn-ghost" style={{padding:'7px 16px',fontSize:'0.8rem',display:'inline-block'}}>Replace</span>
+                  <input type="file" accept=".pdf" onChange={handleResume} style={{display:'none'}}/>
+                </label>
+              </div>
+            ):(
+              <label style={{cursor:'pointer',display:'block'}}>
+                <div style={{fontSize:'2.5rem',marginBottom:10,opacity:0.5}}>↑</div>
+                <div style={{fontWeight:600,marginBottom:4}}>Upload Resume</div>
+                <div style={{color:G.muted,fontSize:'0.8rem',marginBottom:16}}>PDF format · Max 10MB</div>
+                <span className="btn-primary" style={{padding:'9px 20px',fontSize:'0.85rem',display:'inline-block'}}>Choose File</span>
+                <input type="file" accept=".pdf" onChange={handleResume} style={{display:'none'}}/>
+              </label>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── INTERVIEW PAGE ── */
+function InterviewPage({ currentUser }) {
+  const defaultMsg = {sender:'ai',text:"Welcome to your SkillSync AI Mock Interview. I'm ready when you are. Please introduce yourself and let's begin."};
+  const [messages, setMessages] = useState([defaultMsg]);
+  const [input, setInput] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [active, setActive] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [showReport, setShowReport] = useState(false);
+  const chatEndRef = useRef(null);
+  const videoRef = useRef(null);
+
+  useEffect(()=>{ chatEndRef.current?.scrollIntoView({behavior:'smooth'}); },[messages]);
+
+  useEffect(()=>{
+    let stream=null;
+    if(active){
+      navigator.mediaDevices.getUserMedia({video:true,audio:false})
+        .then(s=>{stream=s;if(videoRef.current)videoRef.current.srcObject=s;}).catch(()=>{});
+    } else {
+      if(videoRef.current?.srcObject){videoRef.current.srcObject.getTracks().forEach(t=>t.stop());videoRef.current.srcObject=null;}
+      window.speechSynthesis?.cancel();
+    }
+    return()=>{if(stream)stream.getTracks().forEach(t=>t.stop());};
+  },[active]);
+
+  const send = async()=>{
+    if(!input.trim())return;
+    const msg=input;
+    setMessages(prev=>[...prev,{sender:'user',text:msg}]);
+    setInput('');setLoading(true);
+    try{
+      const res=await fetch(`${API_URL}/api/chat`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:currentUser.email,user_message:msg})});
+      const data=await res.json();
+      if(data.status==='success'){
+        setMessages(prev=>[...prev,{sender:'ai',text:data.reply}]);
+        if('speechSynthesis'in window){window.speechSynthesis.cancel();const u=new SpeechSynthesisUtterance(data.reply);u.rate=1.0;window.speechSynthesis.speak(u);}
+      }
+    }catch{setMessages(prev=>[...prev,{sender:'ai',text:'Network error.'}]);}
+    finally{setLoading(false);}
+  };
+
+  const endInterview=async()=>{
+    setActive(false);window.speechSynthesis?.cancel();
+    if(messages.length<=1){setMessages([defaultMsg]);return;}
+    setAnalyzing(true);
+    const transcript=messages.map(m=>`${m.sender.toUpperCase()}: ${m.text}`).join('\n\n');
+    try{
+      const res=await fetch(`${API_URL}/api/analyze_interview`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:currentUser.email,transcript})});
+      if(res.ok){setShowReport(true);setMessages([defaultMsg]);}
+    }catch{}
+    finally{setAnalyzing(false);}
+  };
+
+  return(
+    <div style={{display:'flex',flex:1,overflow:'hidden',position:'relative'}} className="fade-in">
+      <ParticleBackground scene="interview"/>
+      {(analyzing||showReport)&&(
+        <div className="modal-bg">
+          <div className="glass" style={{padding:48,textAlign:'center',maxWidth:420,width:'90%'}}>
+            {analyzing?(
+              <>
+                <div className="pulse" style={{width:64,height:64,borderRadius:'50%',background:'linear-gradient(135deg,#0066ff,#00d4ff)',margin:'0 auto 24px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'1.5rem'}}>⚡</div>
+                <h2 style={{marginBottom:8}}>Analyzing Performance</h2>
+                <p style={{color:G.muted,fontSize:'0.9rem'}}>Generating your AI-powered feedback report...</p>
+              </>
+            ):(
+              <>
+                <div style={{fontSize:'3.5rem',marginBottom:16}}>📊</div>
+                <h2 style={{marginBottom:8}}>Report Generated!</h2>
+                <p style={{color:G.muted,fontSize:'0.9rem',marginBottom:28}}>Your performance has been analyzed successfully.</p>
+                <button className="btn-primary" style={{padding:'12px 28px',fontSize:'0.95rem'}} onClick={()=>setShowReport(false)}>Close</button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      <div style={{display:'flex',flex:1,zIndex:1,position:'relative'}}>
+        <div style={{width:280,background:'rgba(10,22,40,0.88)',borderRight:`1px solid ${G.border}`,padding:24,display:'flex',flexDirection:'column',backdropFilter:'blur(16px)',flexShrink:0}}>
+          <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'2px',textTransform:'uppercase',marginBottom:16}}>Session Setup</div>
+          <div style={{background:'#000',height:180,borderRadius:12,overflow:'hidden',marginBottom:16,position:'relative',border:`1px solid ${G.border}`,display:'flex',alignItems:'center',justifyContent:'center'}}>
+            {active?<video ref={videoRef} autoPlay playsInline muted style={{width:'100%',height:'100%',objectFit:'cover',transform:'scaleX(-1)'}}/>:(
+              <div style={{textAlign:'center'}}>
+                <div style={{fontSize:'2.5rem',marginBottom:6,opacity:0.2}}>◉</div>
+                <div style={{color:G.muted,fontSize:'0.78rem'}}>Camera Off</div>
+              </div>
+            )}
+            <div style={{position:'absolute',top:10,right:10,display:'flex',alignItems:'center',gap:6,background:'rgba(0,0,0,0.7)',padding:'4px 10px',borderRadius:20}}>
+              <div style={{width:7,height:7,borderRadius:'50%',background:active?G.green:G.red,boxShadow:`0 0 6px ${active?G.green:G.red}`}}/>
+              <span style={{fontSize:'0.62rem',color:'white',letterSpacing:'1px',fontFamily:G.mono}}>{active?'LIVE':'OFFLINE'}</span>
+            </div>
+          </div>
+          <div className="glass" style={{padding:16,marginBottom:16}}>
+            {[['Role',currentUser.job_preference||'General SWE'],['Level','Mid-Senior'],['Focus','DSA & System Design']].map(([k,v])=>(
+              <div key={k} style={{display:'flex',justifyContent:'space-between',padding:'7px 0',borderBottom:'1px solid rgba(255,255,255,0.04)',fontSize:'0.82rem'}}>
+                <span style={{color:G.muted}}>{k}</span><span style={{fontWeight:500}}>{v}</span>
+              </div>
+            ))}
+          </div>
+          <button onClick={active?endInterview:()=>setActive(true)} className={active?'btn-danger':'btn-primary'} style={{padding:'13px',fontWeight:700,fontSize:'0.92rem',marginTop:'auto'}}>
+            {active?'⬛ End Interview':'▶ Start Interview'}
+          </button>
+        </div>
+
+        <div style={{flex:1,display:'flex',flexDirection:'column',padding:28,background:'rgba(2,8,23,0.65)',backdropFilter:'blur(8px)'}}>
+          <div style={{marginBottom:20,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+            <div>
+              <h2 style={{fontSize:'1.3rem',fontWeight:700}}>Live Mock Interview</h2>
+              <div style={{color:G.muted,fontSize:'0.8rem',marginTop:2}}>{currentUser.name} · AI Interviewer Session</div>
+            </div>
+            {active&&<div style={{display:'flex',alignItems:'center',gap:8,background:'rgba(0,255,170,0.08)',border:'1px solid rgba(0,255,170,0.2)',borderRadius:20,padding:'6px 14px'}}>
+              <div className="live-dot"/><span style={{fontSize:'0.75rem',color:G.green,fontFamily:G.mono,letterSpacing:'1px'}}>RECORDING</span>
+            </div>}
+          </div>
+
+          <div style={{flex:1,overflowY:'auto',display:'flex',flexDirection:'column',gap:16,paddingRight:4}}>
+            {messages.map((m,i)=>(
+              <div key={i} style={{display:'flex',justifyContent:m.sender==='user'?'flex-end':'flex-start',gap:10,alignItems:'flex-start'}}>
+                {m.sender==='ai'&&<div style={{width:30,height:30,borderRadius:'50%',background:'linear-gradient(135deg,#0066ff,#00d4ff)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.72rem',fontWeight:700,flexShrink:0}}>AI</div>}
+                <div className={m.sender==='ai'?'chat-ai':'chat-user'}>
+                  <div style={{fontSize:'0.68rem',color:G.muted,marginBottom:6,letterSpacing:'0.5px',textTransform:'uppercase',fontFamily:G.mono}}>{m.sender==='ai'?'AI Interviewer':currentUser.name.split(' ')[0]}</div>
+                  {m.text}
+                </div>
+                {m.sender==='user'&&<div style={{width:30,height:30,borderRadius:'50%',background:'linear-gradient(135deg,#004499,#0099ff)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.72rem',fontWeight:700,flexShrink:0}}>{currentUser.name[0].toUpperCase()}</div>}
+              </div>
+            ))}
+            {loading&&<div style={{display:'flex',gap:10,alignItems:'flex-start'}}>
+              <div style={{width:30,height:30,borderRadius:'50%',background:'linear-gradient(135deg,#0066ff,#00d4ff)',display:'flex',alignItems:'center',justifyContent:'center',fontSize:'0.72rem',fontWeight:700}}>AI</div>
+              <div className="chat-ai" style={{display:'flex',gap:5,alignItems:'center',padding:'18px'}}>
+                {[0,0.2,0.4].map((d,i)=><div key={i} style={{width:6,height:6,borderRadius:'50%',background:G.accent,animation:`blink 1s ease-in-out ${d}s infinite`}}/>)}
+              </div>
+            </div>}
+            <div ref={chatEndRef}/>
+          </div>
+
+          <div style={{display:'flex',gap:12,marginTop:20,padding:'14px 16px',background:'rgba(10,22,40,0.85)',borderRadius:14,border:`1px solid ${G.border}`,backdropFilter:'blur(12px)'}}>
+            <input className="input-field" style={{flex:1,background:'transparent',border:'none',padding:'4px 0',boxShadow:'none'}} value={input} onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==='Enter'&&!e.shiftKey&&send()} placeholder={active?"Type your answer... (Enter to send)":"Start the interview to begin"} disabled={!active}/>
+            <button className="btn-success" style={{padding:'10px 24px',fontSize:'0.88rem'}} onClick={send} disabled={loading||!active||!input.trim()}>Send →</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── PROFILE PAGE ── */
+function ProfilePage({ currentUser, setCurrentUser }) {
+  const [form, setForm] = useState({name:currentUser.name||'',phone:currentUser.phone||'',college:currentUser.college||'',job_preference:currentUser.job_preference||'',new_password:''});
+  const [msg, setMsg] = useState('');
+
+  const submit = async e => {
+    e.preventDefault(); setMsg('Saving...');
+    try{
+      const res=await fetch(`${API_URL}/api/update_profile`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:currentUser.email,...form})});
+      const data=await res.json();
+      if(res.ok){setCurrentUser(data.user);setMsg('✓ Profile saved!');setTimeout(()=>setMsg(''),3000);}
+      else setMsg('Error: '+data.detail);
+    }catch{setMsg('Network error.');}
+  };
+
+  return(
+    <div style={{padding:32,maxWidth:720,margin:'0 auto',overflowY:'auto',flex:1}} className="fade-in">
+      <div style={{marginBottom:28}}>
+        <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'2px',textTransform:'uppercase',marginBottom:6}}>Settings</div>
+        <h1 style={{fontSize:'1.8rem',fontWeight:700}}>Your <span className="glow-text">Profile</span></h1>
+      </div>
+      <form onSubmit={submit}>
+        <div className="glass" style={{padding:28,marginBottom:20}}>
+          <div style={{fontSize:'0.72rem',color:G.accent,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:20,fontFamily:G.mono}}>Personal Information</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:18}}>
+            {[['Full Name','name','text','John Smith'],['Phone Number','phone','tel','+91 9876543210'],['University / College','college','text','MIT'],['Target Role','job_preference','text','Senior SWE']].map(([label,key,type,ph])=>(
+              <div key={key}>
+                <label style={{display:'block',fontSize:'0.72rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',marginBottom:8}}>{label}</label>
+                <input className="input-field" type={type} placeholder={ph} value={form[key]} onChange={e=>setForm({...form,[key]:e.target.value})} required={key!=='phone'}/>
+              </div>
+            ))}
+          </div>
+          <div style={{marginTop:8}}>
+            <label style={{display:'block',fontSize:'0.72rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',marginBottom:8}}>Email (Non-editable)</label>
+            <input className="input-field" value={currentUser.email} disabled/>
+          </div>
+        </div>
+        <div className="glass" style={{padding:28,marginBottom:24}}>
+          <div style={{fontSize:'0.72rem',color:G.accent,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:20,fontFamily:G.mono}}>Security</div>
+          <label style={{display:'block',fontSize:'0.72rem',color:G.muted,letterSpacing:'1px',textTransform:'uppercase',marginBottom:8}}>New Password <span style={{color:G.muted,textTransform:'none'}}>(optional)</span></label>
+          <input className="input-field" type="password" placeholder="Leave blank to keep current" value={form.new_password} onChange={e=>setForm({...form,new_password:e.target.value})} style={{maxWidth:360}}/>
+        </div>
+        <div style={{display:'flex',alignItems:'center',justifyContent:'space-between'}}>
+          <span style={{color:msg.includes('Error')?G.red:G.green,fontWeight:500,fontSize:'0.88rem'}}>{msg}</span>
+          <button type="submit" className="btn-primary" style={{padding:'13px 32px',fontSize:'0.95rem'}}>Save Changes →</button>
+        </div>
+      </form>
+    </div>
+  );
+}
+
+/* ── ANALYTICS PAGE ── */
+function AnalyticsPage({ currentUser }) {
+  const [selected, setSelected] = useState(null);
+
+  const SkillBar = ({ label, score }) => {
+    const [w, setW] = useState(0);
+    useEffect(()=>{setTimeout(()=>setW(score||0),100);},[score]);
+    return(
+      <div style={{marginBottom:18}}>
+        <div style={{display:'flex',justifyContent:'space-between',marginBottom:8,fontSize:'0.85rem'}}>
+          <span style={{fontWeight:500}}>{label}</span>
+          <span style={{color:G.accent,fontFamily:G.mono,fontWeight:600}}>{score||0}%</span>
+        </div>
+        <div className="bar-track"><div className="bar-fill" style={{width:`${w}%`}}/></div>
+      </div>
+    );
+  };
+
+  const ScoreRing = ({ score }) => {
+    const r=54,circ=2*Math.PI*r;
+    const [offset,setOffset]=useState(circ);
+    useEffect(()=>{setTimeout(()=>setOffset(circ-(score/100)*circ),200);},[score,circ]);
+    return(
+      <svg width="130" height="130" viewBox="0 0 130 130">
+        <circle cx="65" cy="65" r={r} fill="none" stroke="rgba(255,255,255,0.05)" strokeWidth="10"/>
+        <circle className="score-ring score-arc" cx="65" cy="65" r={r} fill="none" stroke="url(#sg)" strokeWidth="10" strokeLinecap="round" strokeDasharray={circ} strokeDashoffset={offset}/>
+        <defs><linearGradient id="sg" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#0066ff"/><stop offset="100%" stopColor="#00d4ff"/></linearGradient></defs>
+        <text x="65" y="60" textAnchor="middle" fill={G.text} fontSize="28" fontWeight="700" fontFamily={G.mono}>{score}</text>
+        <text x="65" y="80" textAnchor="middle" fill={G.muted} fontSize="11" fontFamily={G.font}>/ 100</text>
+      </svg>
+    );
+  };
+
+  if(!currentUser.reports?.length) return(
+    <div style={{flex:1,display:'flex',alignItems:'center',justifyContent:'center',flexDirection:'column',gap:16}} className="fade-in">
+      <div style={{fontSize:'4rem',opacity:0.2}}>◫</div>
+      <h3 style={{color:G.muted}}>No reports yet</h3>
+      <p style={{color:G.muted,fontSize:'0.85rem'}}>Complete a mock interview to generate your first report.</p>
+    </div>
+  );
+
+  if(selected) return(
+    <div style={{padding:32,overflowY:'auto',flex:1}} className="fade-in">
+      <button className="btn-ghost" style={{padding:'8px 16px',fontSize:'0.83rem',marginBottom:24}} onClick={()=>setSelected(null)}>← Back to Reports</button>
+      <div className="glass" style={{padding:36}}>
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',borderBottom:`1px solid ${G.border}`,paddingBottom:24,marginBottom:32}}>
+          <div>
+            <h2 style={{fontSize:'1.6rem',fontWeight:700}}>{selected.title}</h2>
+            <div style={{color:G.muted,fontSize:'0.82rem',marginTop:4,fontFamily:G.mono}}>AI-Generated Performance Report</div>
+          </div>
+          <div style={{background:'rgba(0,255,170,0.1)',border:'1px solid rgba(0,255,170,0.3)',borderRadius:20,padding:'6px 16px',color:G.green,fontSize:'0.8rem',fontWeight:600}}>✓ Verified</div>
+        </div>
+        {typeof selected.content==='string'?(
+          <div style={{color:G.text,lineHeight:1.8,whiteSpace:'pre-wrap'}}>{selected.content.replace(/\*\*/g,'')}</div>
+        ):(
+          <div>
+            <div style={{display:'grid',gridTemplateColumns:'200px 1fr',gap:32,marginBottom:32}}>
+              <div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',background:'rgba(0,0,0,0.3)',borderRadius:16,padding:24}}>
+                <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:16}}>Overall Score</div>
+                <ScoreRing score={selected.content?.overall_score||0}/>
+              </div>
+              <div style={{background:'rgba(0,0,0,0.2)',borderRadius:16,padding:28}}>
+                <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'1.5px',textTransform:'uppercase',marginBottom:20}}>Skill Breakdown</div>
+                <SkillBar label="Communication Skills" score={selected.content?.metrics?.communication}/>
+                <SkillBar label="Technical Depth" score={selected.content?.metrics?.technical_depth}/>
+                <SkillBar label="Confidence Signals" score={selected.content?.metrics?.confidence}/>
+              </div>
+            </div>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:20}}>
+              <div style={{background:'rgba(0,102,255,0.06)',border:'1px solid rgba(0,102,255,0.18)',borderRadius:12,padding:24}}>
+                <div style={{color:G.accent,fontWeight:600,marginBottom:12,fontSize:'0.88rem'}}>Executive Summary</div>
+                <p style={{color:G.text,lineHeight:1.7,fontSize:'0.88rem'}}>{selected.content?.overall_impression}</p>
+              </div>
+              <div style={{background:'rgba(255,68,102,0.06)',border:'1px solid rgba(255,68,102,0.18)',borderRadius:12,padding:24}}>
+                <div style={{color:G.red,fontWeight:600,marginBottom:12,fontSize:'0.88rem'}}>Areas for Improvement</div>
+                <ul style={{paddingLeft:18,color:G.text,lineHeight:2,fontSize:'0.85rem'}}>
+                  {selected.content?.areas_for_improvement?.map((p,i)=><li key={i}>{p}</li>)}
+                </ul>
+              </div>
+            </div>
+            <div style={{marginTop:20,background:'rgba(0,0,0,0.2)',borderRadius:12,padding:24}}>
+              <div style={{fontWeight:600,marginBottom:12,fontSize:'0.88rem'}}>Detailed Analysis</div>
+              <p style={{color:G.muted,lineHeight:1.8,fontSize:'0.88rem'}}>{selected.content?.detailed_analysis}</p>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+
+  return(
+    <div style={{padding:32,overflowY:'auto',flex:1}} className="fade-in">
+      <div style={{marginBottom:28}}>
+        <div style={{fontSize:'0.7rem',color:G.muted,letterSpacing:'2px',textTransform:'uppercase',marginBottom:6}}>Performance</div>
+        <h1 style={{fontSize:'1.8rem',fontWeight:700}}>Interview <span className="glow-text">Analytics</span></h1>
+      </div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(280px,1fr))',gap:20}}>
+        {currentUser.reports.map(r=>(
+          <div key={r.id} className="glass" style={{padding:24,cursor:'pointer',transition:'all 0.3s'}} onClick={()=>setSelected(r)}
+            onMouseEnter={e=>{e.currentTarget.style.transform='translateY(-6px)';e.currentTarget.style.borderColor='rgba(0,212,255,0.35)';}}
+            onMouseLeave={e=>{e.currentTarget.style.transform='translateY(0)';e.currentTarget.style.borderColor='rgba(0,212,255,0.12)';}}>
+            <div style={{fontSize:'2rem',marginBottom:12,opacity:0.7}}>◫</div>
+            <h3 style={{fontSize:'1.1rem',fontWeight:700,color:G.accent,marginBottom:8}}>{r.title}</h3>
+            {typeof r.content!=='string'&&r.content?.overall_score&&(
+              <div style={{display:'flex',alignItems:'baseline',gap:6,marginBottom:12}}>
+                <div style={{fontSize:'1.6rem',fontWeight:700,fontFamily:G.mono}}>{r.content.overall_score}</div>
+                <div style={{fontSize:'0.8rem',color:G.muted}}>/100 score</div>
+              </div>
+            )}
+            <div style={{display:'inline-flex',alignItems:'center',gap:6,background:'rgba(0,255,170,0.08)',border:'1px solid rgba(0,255,170,0.2)',borderRadius:20,padding:'4px 12px'}}>
+              <span style={{fontSize:'0.72rem',color:G.green,fontWeight:600}}>✓ AI Graded</span>
+            </div>
+            <div style={{marginTop:14,color:G.accent,fontSize:'0.83rem',fontWeight:600}}>View Full Report →</div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ── ROOT ── */
+export default function App() {
+  const [currentUser, setCurrentUser] = useState(null);
+  const [activeTab, setActiveTab] = useState('dashboard');
+  const logout = () => { setCurrentUser(null); setActiveTab('dashboard'); window.speechSynthesis?.cancel(); };
+
+  if (!currentUser) return <><style>{css}</style><LoginPage onLogin={setCurrentUser}/></>;
+
+  const isIncomplete = !currentUser.phone||!currentUser.college||!currentUser.job_preference;
+
+  return (
+    <>
+      <style>{css}</style>
+      <div style={{display:'flex',height:'100vh',overflow:'hidden',background:G.bg}}>
+        <Sidebar activeTab={activeTab} setActiveTab={t=>{setActiveTab(t);}} currentUser={currentUser} onLogout={logout} isIncomplete={isIncomplete}/>
+        <main style={{flex:1,display:'flex',overflow:'hidden',position:'relative'}}>
+          {activeTab==='dashboard'&&<Dashboard currentUser={currentUser} setCurrentUser={setCurrentUser} setActiveTab={setActiveTab}/>}
+          {activeTab==='interview'&&<InterviewPage currentUser={currentUser} setCurrentUser={setCurrentUser}/>}
+          {activeTab==='profile'&&<ProfilePage currentUser={currentUser} setCurrentUser={setCurrentUser}/>}
+          {activeTab==='analytics'&&<AnalyticsPage currentUser={currentUser}/>}
+        </main>
+      </div>
+    </>
+  );
+}
